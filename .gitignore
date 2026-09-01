@@ -1,0 +1,41 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform Variables and plans
+terraform.tfvars
+*.tfplan
+
+# Local credentials, evidence, and generated build output
+.env
+.gh-cli/
+.local/
+.build/
+.venv/
+
+# Project-scoped GitHub CLI authentication
+.gh-cli/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# IntelliJ
+.idea/
