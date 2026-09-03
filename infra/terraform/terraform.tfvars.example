@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and replace bucket names with globally unique values.
+gcp_project_id      = "your-project-id"
+gcp_region          = "asia-south1"
+gcp_input_bucket    = "your-project-image-input"
+gcp_output_bucket   = "your-project-image-output"
+
+pubsub_topic_name               = "image-upload-events"
+notification_success_topic_name = "image-resize-success"
+
+# Keep false unless this is a disposable project and deleting all objects is intended.
+force_destroy_buckets = false
