@@ -52,7 +52,12 @@ resource "google_cloudfunctions2_function" "resize_image_function" {
     service_account_email = google_service_account.resize_trigger_sa.email
   }
 
-  depends_on = [time_sleep.wait_for_iam_propagation]
+  # Cloud Functions creates a shared regional source bucket on first use.
+  # Serialize the initial deployments to avoid a concurrent 409 bootstrap race.
+  depends_on = [
+    time_sleep.wait_for_iam_propagation,
+    google_cloudfunctions2_function.resize_image_function,
+  ]
 }
 
 resource "google_cloudfunctions2_function" "notification_function" {
