@@ -1,0 +1,35 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test and function dependencies
+        run: pip install -r requirements-dev.txt -r functions/resize/requirements.txt
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: python -m pytest
+      - name: Package functions
+        run: python scripts/package.py
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+      - name: Terraform format and validate
+        run: |
+          terraform -chdir=infra/terraform fmt -check
+          terraform -chdir=infra/terraform init -backend=false
+          terraform -chdir=infra/terraform validate
