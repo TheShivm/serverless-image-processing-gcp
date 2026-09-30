@@ -12,7 +12,7 @@
 
 **Upload an image. Get a resized copy. Receive an auditable completion event.**
 
-[Explore the architecture](#architecture) · [Deploy it](#deploy-your-own-pipeline) · [Run live verification](#prove-the-deployment-works) · [Read the runbooks](#documentation)
+[Explore the architecture](#architecture) · [Read the evidence story](#the-build-the-proof-and-the-clean-teardown) · [Deploy it](#deploy-your-own-pipeline) · [Run live verification](#prove-the-deployment-works) · [Read the runbooks](#documentation)
 
 </div>
 
@@ -66,6 +66,100 @@ The output keeps the original object name. A `1600 × 1000` JPEG becomes `800 ×
 </p>
 
 The diagrams are a visual explanation of the system boundaries. For repeatable deployment evidence, use the live verifier and its [sanitized verification report](docs/evidence/results/2026-09-30-live-verification.md).
+
+---
+
+## 📖 The build, the proof, and the clean teardown
+
+> [!NOTE]
+> This is a historical evidence story, not a claim that the demo is live today. The screenshots document a real deployment and verification run. Afterward, the pipeline was deliberately decommissioned. A final live inventory confirmed an empty Terraform state and the absence of both functions, Cloud Run services, Eventarc triggers, buckets, topics, service accounts, the generated source bucket, and the Cloud Functions Artifact Registry repository.
+
+This project was never about producing a pretty architecture diagram and assuming the rest worked. The interesting part was the journey: take a tiny event-driven idea, make every boundary explicit, prove it with an actual object, try the unhappy path, and leave the cloud project clean when the experiment is over.
+
+### Chapter 1 — establish a repeatable starting point
+
+Before touching the cloud, the project was checked from the terminal: project context, Terraform, the Google provider, credentials, and the local toolchain. The goal was not a clever demo; it was a deployment that could be reasoned about and repeated.
+
+![Terminal preflight confirms the project, Terraform, gcloud, provider, and Python configuration.](docs/evidence/screenshots/01-local-validation.png)
+
+The next question was whether infrastructure code and cloud state told the same story. Terraform refreshed the declared resources and found no surprise changes before testing began.
+
+![Terraform refresh and pre-test plan show the deployed resources align with configuration.](docs/evidence/screenshots/02-terraform-pre-test-plan.png)
+
+The deployed-state capture makes the important point visible: Terraform was checking a complete graph—storage, Pub/Sub, identities, Eventarc, functions, and IAM—not just a function zip uploaded somewhere.
+
+![Terraform deployed-state refresh shows the managed GCP resource graph and a no-change conclusion.](docs/evidence/screenshots/03-terraform-deployed-state.png)
+
+### Chapter 2 — make the route private and explicit
+
+The implementation created two Cloud Run-backed Functions Gen2 services: one to resize images and one to record the completed work. Their value is not simply that they exist; it is that they are separate, internal-only services with a defined handoff between them.
+
+![Cloud Run service list shows the image-resizing and image-notification services deployed in asia-south1.](docs/evidence/screenshots/04-cloud-run-services.png)
+
+The first Eventarc route begins with the upload topic and invokes the resizer through the dedicated `resize-trigger-sa` identity.
+
+![Eventarc upload trigger details show the image-upload-events topic, resizer destination, and dedicated trigger identity.](docs/evidence/screenshots/05a-upload-event-trigger.png)
+
+The second route carries a success message, not a Storage event. It invokes the notifier through its own `notify-trigger-sa` identity. That small separation makes the pipeline’s completion observable without giving the notifier access to images.
+
+![Eventarc success trigger details show the image-resize-success topic, notifier destination, and dedicated trigger identity.](docs/evidence/screenshots/05b-success-notification-trigger.png)
+
+The input bucket’s configuration captures the project’s security posture in one place: uniform bucket-level access, public-access prevention, and storage notification routing. The runtime services remained private; public invocation was never used as a shortcut.
+
+![Cloud Storage configuration shows private bucket controls and the upload notification configuration.](docs/evidence/screenshots/06a-storage-security.png)
+
+### Chapter 3 — follow one image through the system
+
+With the route ready, the evidence uses one concrete object as the protagonist. The input object has a unique key, generation, and timestamp—enough information to distinguish this execution from every other upload.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/evidence/screenshots/07-input-object.png" alt="Terminal object description for the uploaded input image"></td>
+    <td width="50%"><img src="docs/evidence/screenshots/07b-input-object.png" alt="Cloud Storage console object details for the uploaded input image"></td>
+  </tr>
+  <tr>
+    <td><em>CLI evidence records the object key and generation.</em></td>
+    <td><em>Console evidence shows the same input object in Cloud Storage.</em></td>
+  </tr>
+</table>
+
+The resize service then emits a structured execution trail. A single object key ties together the start, output upload, and successful completion records—the exact sequence that a screenshot of an output file alone cannot prove.
+
+![Cloud Run logs for the resizer show execution records correlated to the uploaded object.](docs/evidence/screenshots/08-resize-function-logs.png)
+
+The output appears under the same key in the separate output bucket. Keeping the key stable makes correlation simple while keeping the original file separate from the transformed result.
+
+![Terminal object description confirms the resized object exists in the output bucket with the matching key.](docs/evidence/screenshots/09-output-object.png)
+
+The transformation itself is measured, not inferred from file size. The demonstration captures the contract in its simplest form: a 1600 × 1000 source becomes an 800 × 500 result.
+
+![Terminal evidence measures the source and output image dimensions as 1600 by 1000 and 800 by 500.](docs/evidence/screenshots/10-image-resize-proof.png)
+
+Only after the output write succeeds does the resizer publish its completion message. The notification function consumes that message and writes an `IMAGE_RESIZE_NOTIFICATION` JSON record, completing the pipeline’s second stage.
+
+![Cloud Run logs for the notification function show the structured successful completion message.](docs/evidence/screenshots/11-notification-log.png)
+
+### Chapter 4 — prove the happy path and challenge it
+
+The verifier gathers more than a green message. It records the project, run ID, object generations, output dimensions, input/output hashes, and notification observation for the same object. That gives the result enough context to audit later.
+
+![End-to-end verifier evidence records the project, run ID, input and output object generations, image dimensions, and notification observation.](docs/evidence/screenshots/12-e2e-verification.png)
+
+Then comes the important non-happy-path question: what happens when the upload is not an image? The resizer rejects invalid bytes. It must not create an output object, and it must not emit a downstream success notification.
+
+![Invalid-input execution evidence shows the resizer failing closed rather than falsely reporting a successful resize.](docs/evidence/screenshots/13-invalid-input-test.png)
+
+After the end-to-end checks, Terraform was run again. The final plan returned to a no-change result: the test exercised the workload without silently drifting the managed infrastructure.
+
+![Final Terraform plan confirms the tested deployment still matches the declared configuration.](docs/evidence/screenshots/14-final-no-drift-plan.png)
+
+### Chapter 5 — leave no running workload behind
+
+Good serverless hygiene is also knowing when to stop. The original cleanup evidence records the destroy operation and a narrow project inventory. A later final inventory repeated that check and confirmed that the active pipeline workload is gone.
+
+![Cleanup verification records Terraform destroy completion and a focused inventory of the removed project resources.](docs/evidence/screenshots/15-cleanup-verification.png)
+
+The lesson is intentionally modest: a serverless workflow is trustworthy when its input, routing, transformation, notification, failure behavior, drift check, and cleanup can all be shown—not just described. The configuration remains here as a reproducible blueprint; the verified cloud deployment is now decommissioned.
 
 ---
 
