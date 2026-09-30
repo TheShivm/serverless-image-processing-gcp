@@ -26,14 +26,23 @@
 An object finalized in the private input bucket starts a two-stage pipeline. The resize function writes a same-key output object, publishes a success message only after that write succeeds, and a second function emits a structured completion record to Cloud Logging.
 
 ```mermaid
-flowchart LR
-    U([🖼️ Upload image]) --> I[(Private input bucket)]
-    I -->|OBJECT_FINALIZE| P1{{Upload topic}}
-    P1 -->|authenticated Eventarc| R[⚙️ Resize function<br/>Cloud Functions Gen2]
-    R -->|same object key| O[(Private output bucket)]
-    R -->|SUCCESS event| P2{{Completion topic}}
-    P2 -->|authenticated Eventarc| N[📋 Notification function<br/>Cloud Functions Gen2]
-    N -->|JSON stdout| L[(Cloud Logging)]
+flowchart TB
+    U([🖼️ Upload image])
+    I[(Private input bucket)]
+    P1{{Upload topic}}
+    R[⚙️ Resize function<br/>Cloud Functions Gen2]
+    O[(Private output bucket)]
+    P2{{Completion topic}}
+    N[📋 Notification function<br/>Cloud Functions Gen2]
+    L[(Cloud Logging)]
+
+    U --> I
+    I -->|OBJECT_FINALIZE| P1
+    P1 -->|authenticated Eventarc delivery| R
+    R -->|write same object key| O
+    O -->|after successful output write| P2
+    P2 -->|authenticated Eventarc delivery| N
+    N -->|structured JSON stdout| L
 
     classDef storage fill:#E8F0FE,stroke:#4285F4,color:#172554,stroke-width:2px;
     classDef topic fill:#FEF3C7,stroke:#F59E0B,color:#78350F,stroke-width:2px;
@@ -181,26 +190,26 @@ The lesson is intentionally modest: a serverless workflow is trustworthy when it
 ### Event lifecycle, step by step
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant Client as Upload client
-    participant Input as Input bucket
-    participant Upload as Upload topic
-    participant Resize as Resize function
-    participant Output as Output bucket
-    participant Done as Completion topic
-    participant Notice as Notification function
-    participant Logs as Cloud Logging
+flowchart TB
+    S1["1 · Upload client<br/>Finalizes photos/example.jpg in the input bucket"]
+    S2["2 · Input bucket<br/>Emits a JSON API v1 OBJECT_FINALIZE notification"]
+    S3["3 · Upload topic + Eventarc<br/>Delivers the message to the resizer with an authenticated trigger identity"]
+    S4["4 · Resize function<br/>Downloads the event generation, validates the image, and resizes it with Pillow"]
+    S5["5 · Output bucket<br/>Receives the same-key resized object"]
+    S6["6 · Completion topic<br/>Receives the validated SUCCESS payload only after the output write"]
+    S7["7 · Notification function<br/>Consumes the completion message through authenticated Eventarc delivery"]
+    S8["8 · Cloud Logging<br/>Captures one IMAGE_RESIZE_NOTIFICATION JSON record"]
 
-    Client->>Input: Finalize `photos/example.jpg`
-    Input->>Upload: JSON API v1 `OBJECT_FINALIZE` notification
-    Upload->>Resize: Authenticated Eventarc delivery
-    Resize->>Input: Download event object generation
-    Resize->>Resize: Validate + resize image with Pillow
-    Resize->>Output: Upload `photos/example.jpg`
-    Resize->>Done: Publish validated `SUCCESS` payload
-    Done->>Notice: Authenticated Eventarc delivery
-    Notice->>Logs: `IMAGE_RESIZE_NOTIFICATION` JSON record
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8
+
+    classDef storage fill:#E8F0FE,stroke:#4285F4,color:#172554,stroke-width:2px;
+    classDef topic fill:#FEF3C7,stroke:#F59E0B,color:#78350F,stroke-width:2px;
+    classDef function fill:#E8F5E9,stroke:#34A853,color:#14532D,stroke-width:2px;
+    classDef logging fill:#F3E8FF,stroke:#9333EA,color:#581C87,stroke-width:2px;
+    class S2,S5 storage;
+    class S3,S6 topic;
+    class S4,S7 function;
+    class S8 logging;
 ```
 
 ### The completion contract
