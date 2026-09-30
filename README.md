@@ -30,19 +30,26 @@ flowchart TB
     U([🖼️ Upload image])
     I[(Private input bucket)]
     P1{{Upload topic}}
-    R[⚙️ Resize function<br/>Cloud Functions Gen2]
-    O[(Private output bucket)]
     P2{{Completion topic}}
-    N[📋 Notification function<br/>Cloud Functions Gen2]
-    L[(Cloud Logging)]
 
-    U --> I
-    I -->|OBJECT_FINALIZE| P1
+    subgraph ResizeStage[Resize stage]
+        direction LR
+        R[⚙️ Resize function<br/>Cloud Functions Gen2]
+        O[(Private output bucket)]
+        R -->|write same object key| O
+    end
+
+    subgraph NotifyStage[Notification stage]
+        direction LR
+        N[📋 Notification function<br/>Cloud Functions Gen2]
+        L[(Cloud Logging)]
+        N -->|structured JSON stdout| L
+    end
+
+    U --> I -->|OBJECT_FINALIZE| P1
     P1 -->|authenticated Eventarc delivery| R
-    R -->|write same object key| O
     O -->|after successful output write| P2
     P2 -->|authenticated Eventarc delivery| N
-    N -->|structured JSON stdout| L
 
     classDef storage fill:#E8F0FE,stroke:#4285F4,color:#172554,stroke-width:2px;
     classDef topic fill:#FEF3C7,stroke:#F59E0B,color:#78350F,stroke-width:2px;
@@ -191,16 +198,31 @@ The lesson is intentionally modest: a serverless workflow is trustworthy when it
 
 ```mermaid
 flowchart TB
-    S1["1 · Upload client<br/>Finalizes photos/example.jpg in the input bucket"]
-    S2["2 · Input bucket<br/>Emits a JSON API v1 OBJECT_FINALIZE notification"]
-    S3["3 · Upload topic + Eventarc<br/>Delivers the message to the resizer with an authenticated trigger identity"]
-    S4["4 · Resize function<br/>Downloads the event generation, validates the image, and resizes it with Pillow"]
-    S5["5 · Output bucket<br/>Receives the same-key resized object"]
-    S6["6 · Completion topic<br/>Receives the validated SUCCESS payload only after the output write"]
-    S7["7 · Notification function<br/>Consumes the completion message through authenticated Eventarc delivery"]
-    S8["8 · Cloud Logging<br/>Captures one IMAGE_RESIZE_NOTIFICATION JSON record"]
+    subgraph Ingest[1–3 · Ingest and dispatch]
+        direction LR
+        S1["Upload client<br/>Finalizes photos/example.jpg"]
+        S2["Input bucket<br/>Emits OBJECT_FINALIZE"]
+        S3["Upload topic + Eventarc<br/>Authenticates delivery to resizer"]
+        S1 --> S2 --> S3
+    end
 
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8
+    subgraph Transform[4–6 · Transform and signal completion]
+        direction LR
+        S4["Resize function<br/>Downloads generation, validates, resizes"]
+        S5["Output bucket<br/>Receives same-key result"]
+        S6["Completion topic<br/>Receives SUCCESS after output write"]
+        S4 --> S5 --> S6
+    end
+
+    subgraph Observe[7–8 · Record completion]
+        direction LR
+        S7["Notification function<br/>Consumes authenticated completion"]
+        S8["Cloud Logging<br/>Captures IMAGE_RESIZE_NOTIFICATION"]
+        S7 --> S8
+    end
+
+    S3 --> S4
+    S6 --> S7
 
     classDef storage fill:#E8F0FE,stroke:#4285F4,color:#172554,stroke-width:2px;
     classDef topic fill:#FEF3C7,stroke:#F59E0B,color:#78350F,stroke-width:2px;
